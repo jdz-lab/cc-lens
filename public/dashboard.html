@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cc-lens · 请求观测面板</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #262b36;
+    --text: #e6e8ee; --dim: #8b93a5; --accent: #d97757;
+    --ok: #34d399; --err: #f87171; --mono: ui-monospace, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; padding: 20px; }
+  .top { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .logo { font-size: 20px; font-weight: 700; }
+  .logo b { color: var(--accent); }
+  .pill { border: 1px solid var(--border); border-radius: 999px; padding: 2px 12px; font-size: 12px; color: var(--dim); font-family: var(--mono); }
+  .pill.live { color: var(--ok); border-color: var(--ok); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .card .num { font-size: 24px; font-weight: 700; font-family: var(--mono); }
+  .card .lbl { font-size: 12px; color: var(--dim); margin-top: 2px; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  @media (max-width: 800px) { .charts { grid-template-columns: 1fr; } }
+  .box { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .box h3 { font-size: 13px; color: var(--dim); font-weight: 600; margin-bottom: 10px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .bar-name { width: 110px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-track { flex: 1; background: var(--bg); border-radius: 4px; height: 14px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 4px; min-width: 2px; }
+  .bar-val { font-size: 11px; color: var(--dim); font-family: var(--mono); width: 30px; text-align: right; }
+  #hours { display: flex; align-items: flex-end; gap: 3px; height: 90px; }
+  #hours .col { flex: 1; background: var(--accent); border-radius: 2px 2px 0 0; min-height: 1px; opacity: .85; }
+  #hours-labels { display: flex; gap: 3px; margin-top: 4px; }
+  #hours-labels span { flex: 1; font-size: 9px; color: var(--dim); text-align: center; font-family: var(--mono); }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 11px; color: var(--dim); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  td.mono { font-family: var(--mono); font-size: 12px; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; color: #0f1115; font-weight: 600; }
+  .st-ok { color: var(--ok); } .st-err { color: var(--err); font-weight: 600; }
+  tr.detail td { background: #12151b; }
+  .kv { font-family: var(--mono); font-size: 12px; color: var(--dim); word-break: break-all; }
+  .kv b { color: var(--text); font-weight: 500; }
+  .empty { color: var(--dim); text-align: center; padding: 30px 0; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <span class="logo">cc<b>-lens</b></span>
+    <span class="pill live" id="live">● LIVE</span>
+    <span class="pill" id="upstream">upstream: -</span>
+    <span class="pill" id="port">port: -</span>
+  </div>
+
+  <div class="cards">
+    <div class="card"><div class="num" id="c-today">0</div><div class="lbl">今日请求</div></div>
+    <div class="card"><div class="num" id="c-ok">-</div><div class="lbl">成功率</div></div>
+    <div class="card"><div class="num" id="c-tokens">0</div><div class="lbl">今日 Tokens (入/出)</div></div>
+    <div class="card"><div class="num" id="c-apps">0</div><div class="lbl">活跃应用</div></div>
+  </div>
+
+  <div class="charts">
+    <div class="box"><h3>应用分布（今日）</h3><div id="apps"><div class="empty">暂无数据</div></div></div>
+    <div class="box"><h3>24 小时请求分布</h3><div id="hours"></div><div id="hours-labels"></div></div>
+  </div>
+
+  <div class="box">
+    <h3>请求列表（实时，最近 200 条）</h3>
+    <table>
+      <thead><tr><th>时间</th><th>应用</th><th>模型</th><th>格式</th><th>状态</th><th>耗时</th><th>Tokens</th><th>Key</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="8" class="empty">暂无数据</td></tr></tbody>
+    </table>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtT = (ts) => new Date(ts).toLocaleTimeString("zh-CN", { hour12: false });
+const fmtN = (n) => (n >= 1000000 ? (n / 1000000).toFixed(1) + "M" : n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n));
+
+function renderStats(s) {
+  $("upstream").textContent = "upstream: " + (s.upstream || "未配置");
+  $("port").textContent = "port: " + s.port;
+  $("c-today").textContent = s.today;
+  $("c-ok").textContent = s.today ? Math.round((s.okCount / s.today) * 100) + "%" : "-";
+  $("c-tokens").textContent = fmtN(s.tokensIn) + " / " + fmtN(s.tokensOut);
+  $("c-apps").textContent = Object.keys(s.byApp).length;
+
+  const appKeys = Object.entries(s.byApp).sort((a, b) => b[1] - a[1]);
+  const maxApp = Math.max(1, ...appKeys.map((k) => k[1]));
+  const colors = {};
+  (window.__appColors = window.__appColors || {});
+  $("apps").innerHTML = appKeys.length
+    ? appKeys.map(([name, n]) => {
+        const c = colors[name] || window.__appColors[name] || "#8b5cf6";
+        return `<div class="bar-row"><span class="bar-name" title="${esc(name)}">${esc(name)}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${(n / maxApp) * 100}%;background:${c}"></div></div>
+          <span class="bar-val">${n}</span></div>`;
+      }).join("")
+    : '<div class="empty">暂无数据</div>';
+
+  const maxH = Math.max(1, ...s.hours);
+  $("hours").innerHTML = s.hours.map((n) =>
+    `<div class="col" style="height:${(n / maxH) * 100}%" title="${n} 次"></div>`).join("");
+  $("hours-labels").innerHTML = s.hours.map((_, i) =>
+    (i % 3 === 0 ? `<span>${String(i).padStart(2, "0")}</span>` : "<span></span>")).join("");
+}
+
+function rowFor(r) {
+  const ok = r.status >= 200 && r.status < 400;
+  return `<tr id="r-${r.ts}-${Math.random().toString(36).slice(2, 6)}">
+    <td class="mono">${fmtT(r.ts)}</td>
+    <td><span class="badge" style="background:${esc(r.color)}">${esc(r.app)}</span></td>
+    <td class="mono">${esc(r.model || "-")}</td>
+    <td class="mono">${esc(r.format)}</td>
+    <td class="mono ${ok ? "st-ok" : "st-err"}">${r.status}${r.error ? " ⚠" : ""}</td>
+    <td class="mono">${r.ms}ms</td>
+    <td class="mono">${fmtN(r.tokensIn || 0)} / ${fmtN(r.tokensOut || 0)}</td>
+    <td class="mono">${esc(r.key || "-")}</td></tr>`;
+}
+
+function detailFor(r) {
+  return `<tr class="detail"><td colspan="8"><div class="kv">
+    <b>${esc(r.method)} ${esc(r.path)}</b> · 请求 ${fmtN(r.bytesIn || 0)}B / 响应 ${fmtN(r.bytesOut || 0)}B · ${r.stream ? "流式" : "非流式"}<br>
+    UA: <b>${esc(r.ua || "-")}</b><br>
+    ${r.error ? "错误: <b style='color:var(--err)'>" + esc(r.error) + "</b>" : ""}
+  </div></td></tr>`;
+}
+
+function prependRow(r) {
+  if ($("rows").querySelector(".empty")) $("rows").innerHTML = "";
+  window.__appColors = window.__appColors || {};
+  window.__appColors[r.app] = r.color;
+  $("rows").insertAdjacentHTML("afterbegin", rowFor(r) + detailFor(r));
+  while ($("rows").children.length > 400) $("rows").lastElementChild.remove();
+}
+
+async function boot() {
+  const s = await (await fetch("/cc-lens/api/stats")).json();
+  renderStats(s);
+  const list = await (await fetch("/cc-lens/api/requests?limit=200")).json();
+  window.__appColors = {};
+  $("rows").innerHTML = list.length ? list.map((r) => rowFor(r) + detailFor(r)).join("") : '<tr><td colspan="8" class="empty">暂无数据</td></tr>';
+  const colorMap = {};
+  list.forEach((r) => (colorMap[r.app] = r.color));
+  window.__appColors = colorMap;
+  renderStats(s);
+
+  const es = new EventSource("/cc-lens/api/stream");
+  es.onmessage = (e) => {
+    try {
+      const r = JSON.parse(e.data);
+      if (r && r.ts && r.app !== undefined) {
+        prependRow(r);
+        fetch("/cc-lens/api/stats").then((x) => x.json()).then(renderStats);
+      }
+    } catch {}
+  };
+  es.onerror = () => $("live").classList.remove("live");
+}
+boot();
+</script>
+</body>
+</html>

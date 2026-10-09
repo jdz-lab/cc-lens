@@ -1,0 +1,6 @@
+# 运行数据（含请求记录，勿提交）
+data/
+*.log
+nohup.out
+.DS_Store
+node_modules/
