@@ -1,0 +1,16 @@
+{
+  "name": "cc-lens",
+  "version": "1.0.0",
+  "description": "给任意 Anthropic/OpenAI 兼容客户端加上 Claude Code 客户端指纹的本地代理，内置请求观测面板",
+  "main": "cc-lens.js",
+  "bin": "cc-lens.js",
+  "scripts": {
+    "start": "node cc-lens.js",
+    "build": "pkg . --output dist/cc-lens.exe"
+  },
+  "pkg": {
+    "assets": ["public/**/*"],
+    "outputPath": "dist"
+  },
+  "license": "MIT"
+}

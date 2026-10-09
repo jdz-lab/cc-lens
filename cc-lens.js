@@ -41,7 +41,12 @@ function main() {
   const cfg = {
     upstream: (args.upstream || process.env.CCLENS_UPSTREAM || "").replace(/\/+$/, ""),
     port: args.port || parseInt(process.env.CCLENS_PORT || "8787", 10),
-    dataDir: path.resolve(args.dataDir || process.env.CCLENS_DATA || path.join(__dirname, "data")),
+    // pkg 打包成 exe 后 __dirname 在快照里不可写，数据目录改用 exe 所在目录
+    dataDir: path.resolve(
+      args.dataDir ||
+        process.env.CCLENS_DATA ||
+        path.join(process.pkg ? path.dirname(process.execPath) : __dirname, "data")
+    ),
   };
 
   store.init(cfg.dataDir, cfg);
